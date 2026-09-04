@@ -14,6 +14,7 @@ Browser ──► /api/jobs (Next route, server-side)
                  ├─ Greenhouse boards API   (company careers data, per company)
                  ├─ Lever postings API      (company careers data, per company)
                  ├─ Ashby job-board API     (company careers data, per company)
+                 ├─ Workday CXS API         (big sponsors off the public boards)
                  ├─ Remotive API            (free remote-jobs aggregator)
                  └─ Arbeitnow API           (free job-board aggregator)
                  │
@@ -59,11 +60,22 @@ npm run build && npm start   # production build
 
 Everything lives in [`lib/sources.js`](lib/sources.js):
 
-- `GREENHOUSE`, `LEVER`, `ASHBY` — arrays of company **board tokens**. Add a
-  company by finding its token (e.g. `boards.greenhouse.io/<token>`,
+- `GREENHOUSE`, `LEVER`, `ASHBY` — arrays of company **board tokens** (exact
+  post dates). Add a company by finding its token (e.g. `boards.greenhouse.io/<token>`,
   `jobs.lever.co/<token>`, `jobs.ashbyhq.com/<token>`) and dropping it in the
   right list. Wrong tokens are skipped safely.
+- `WORKDAY` — `{name, host, tenant, site}` configs for companies that use
+  Workday instead of a public board (Nvidia, Salesforce, Intel, Adobe, …). This
+  is how the feed reaches big H-1B sponsors that have no Greenhouse/Lever/Ashby
+  board. Workday exposes only a **relative** post date, so these roles are
+  day-resolution and surface only at the 24h/36h/48h window positions.
 - `AGGREGATORS` — free JSON endpoints.
+
+The list currently holds ~123 companies (≈61 Greenhouse, ≈8 Lever, ≈42 Ashby,
+12 Workday) plus 2 aggregators — every one vetted for a live board **and** recent
+H-1B filings. There is no hard limit; adding more is just more entries. With
+~60 Greenhouse boards read at `?content=true`, a cold fetch pulls a lot of data
+(a few seconds); results are cached 90s so it only happens on a cache miss.
 
 Classification rules (the 5 role buckets and 6 position types) live in
 [`lib/classify.js`](lib/classify.js).
