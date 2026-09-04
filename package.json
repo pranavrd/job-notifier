@@ -1,0 +1,17 @@
+{
+  "name": "job-notifier",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live tech & AI job feed pulling real postings from company ATS APIs (Greenhouse, Lever, Ashby) and free aggregators, filtered to the last 24 hours.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

@@ -1,0 +1,92 @@
+# JobNotifier
+
+A live tech & AI job feed. It pulls **real postings** from company job boards and
+free aggregators, classifies them, and shows only roles **posted in the last 24
+hours** — in a Gruvbox Dark, emoji-free UI.
+
+Built with Next.js (App Router). No API keys, no database, deploys to Vercel as-is.
+
+## How it works
+
+```
+Browser ──► /api/jobs (Next route, server-side)
+                 │
+                 ├─ Greenhouse boards API   (company careers data, per company)
+                 ├─ Lever postings API      (company careers data, per company)
+                 ├─ Ashby job-board API     (company careers data, per company)
+                 ├─ Remotive API            (free remote-jobs aggregator)
+                 └─ Arbeitnow API           (free job-board aggregator)
+                 │
+          normalize → classify role/position → detect country/work-type
+                 │
+          keep only postings from the trailing 24h → dedupe → sort newest-first
+```
+
+All fetching happens **server-side**, so there are no CORS problems and a slow or
+failing source never breaks the page (each is wrapped in `Promise.allSettled`
+with an 8s timeout). Results are cached in memory for 90s; the 24h window is
+applied *after* the cache, relative to each request, so "last 24h from load or
+Sync" stays accurate.
+
+### Why these sources
+
+Greenhouse / Lever / Ashby expose a company's own job board as public JSON — the
+same data the company's careers page renders. That's the most reliable way to get
+postings **directly from the company** without a brittle HTML scraper that gets
+blocked. The two aggregators add volume and guarantee the feed stays fresh.
+
+## Run locally
+
+```bash
+npm install
+npm run dev
+# open http://localhost:3000
+```
+
+```bash
+npm run build && npm start   # production build
+```
+
+## Deploy to Vercel
+
+1. Push this folder to a GitHub repo.
+2. Import it at [vercel.com/new](https://vercel.com/new) — it auto-detects Next.js.
+3. Deploy. No environment variables required.
+
+(Or `npm i -g vercel && vercel` from this folder.)
+
+## Configure the feed
+
+Everything lives in [`lib/sources.js`](lib/sources.js):
+
+- `GREENHOUSE`, `LEVER`, `ASHBY` — arrays of company **board tokens**. Add a
+  company by finding its token (e.g. `boards.greenhouse.io/<token>`,
+  `jobs.lever.co/<token>`, `jobs.ashbyhq.com/<token>`) and dropping it in the
+  right list. Wrong tokens are skipped safely.
+- `AGGREGATORS` — free JSON endpoints.
+
+Classification rules (the 5 role buckets and 6 position types) live in
+[`lib/classify.js`](lib/classify.js).
+
+## The filters (and how they map to the data)
+
+| Filter | Values |
+| --- | --- |
+| **Country** | All · Canada · USA · Cross-Border · International (detected from location) |
+| **Work type** | All · Remote · Hybrid · Onsite |
+| **Position** | All · Internship · Full-Time · New Grad · Contract · Co-op |
+| **Roles** | All · Software · AI/ML · Backend · Cloud · Other |
+
+`Other` deliberately captures **Full-Stack, Forward-Deployed (FDE), and Agentic-AI**
+titles. Position type prefers the ATS's structured field (Lever `commitment`,
+Ashby `employmentType`) and falls back to parsing the title.
+
+## Notes & limitations
+
+- **24h window is strict.** If no configured source has posted in the last day,
+  the feed is legitimately empty — press **Sync** to re-check. Add more companies
+  in `lib/sources.js` to raise the odds of fresh postings.
+- Greenhouse exposes `updated_at` (not a separate created date), so its freshness
+  is a close proxy. Lever/Ashby/Remotive/Arbeitnow use true posting dates.
+- Country/work-type are heuristic from free-text locations.
+- Application status is stored per-browser in `localStorage` (no accounts).
