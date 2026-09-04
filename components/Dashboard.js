@@ -133,8 +133,10 @@ export default function Dashboard() {
   function toggleApplied(job) {
     setApplied((prev) => {
       const next = { ...prev };
-      if (next[job.id]) delete next[job.id]; else next[job.id] = true;
+      const wasApplied = !!next[job.id];
+      if (wasApplied) delete next[job.id]; else next[job.id] = true;
       LS.set("jn_applied", next);
+      flash(wasApplied ? "Moved back to the feed" : "Marked applied — moved to Applications");
       return next;
     });
   }
@@ -166,13 +168,14 @@ export default function Dashboard() {
     return jobs.filter((j) => j.postedAt >= cutoff);
   }, [jobs, refTime]);
 
-  // Drop hidden (still within their month) and reported jobs/companies.
+  // The working feed drops anything applied (it moves to Applications), hidden
+  // (still within its month), or reported (job or whole company).
   const liveJobs = useMemo(() => {
     const now = Date.now();
     return windowJobs.filter((j) =>
-      !reportedCos[companyKey(j.company)] && !reportedJobs[j.id] && !(hidden[j.id] > now)
+      !applied[j.id] && !reportedCos[companyKey(j.company)] && !reportedJobs[j.id] && !(hidden[j.id] > now)
     );
-  }, [windowJobs, hidden, reportedJobs, reportedCos]);
+  }, [windowJobs, applied, hidden, reportedJobs, reportedCos]);
 
   const applyFacets = (arr) => {
     const ql = q.trim().toLowerCase();

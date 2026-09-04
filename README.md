@@ -90,7 +90,8 @@ VP / Architect (and similar) are dropped in `lib/classify.js`. Mid-levels like
 
 Each card has three actions (stored per-browser in `localStorage`, no accounts):
 
-- **Applied** (check) — tracks the role; it shows up under the **Applications** tab.
+- **Applied** (check) — moves the role **out of the feed** into the **Applications**
+  tab (un-applying there returns it to the feed).
 - **Hide** (eye) — removes the role for **30 days**, then it can resurface.
 - **Report** (flag) — hides that role **and the whole company, permanently**.
 
@@ -98,10 +99,12 @@ Each Hide / Report shows an **Undo** in the toast.
 
 ## Notes & limitations
 
-- **24h window is strict.** If no configured source has posted in the last day,
-  the feed is legitimately empty — press **Sync** to re-check. Add more companies
-  in `lib/sources.js` to raise the odds of fresh postings.
-- Greenhouse exposes `updated_at` (not a separate created date), so its freshness
-  is a close proxy. Lever/Ashby/Remotive/Arbeitnow use true posting dates.
+- **24h window is strict and honest.** Every source uses a true post date
+  (Greenhouse via `first_published`, read with `?content=true`; Lever `createdAt`;
+  Ashby `publishedAt`; aggregators their publish dates). A genuine "posted in the
+  last 24h" tech feed is naturally small — expect tens, not hundreds — because
+  most postings older than a day are excluded. Add companies in `lib/sources.js`
+  to raise volume. Each company is also capped (12 roles) so one big board can't
+  dominate.
 - Country/work-type are heuristic from free-text locations.
 - Applied / hidden / reported lists live per-browser in `localStorage` (no accounts).
