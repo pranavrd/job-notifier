@@ -81,6 +81,21 @@ Classification rules (the 5 role buckets and 6 position types) live in
 titles. Position type prefers the ATS's structured field (Lever `commitment`,
 Ashby `employmentType`) and falls back to parsing the title.
 
+**Seniority filter:** this board targets early-career / individual-contributor
+roles, so titles marked Senior / Staff / Principal / Lead / Manager / Director /
+VP / Architect (and similar) are dropped in `lib/classify.js`. Mid-levels like
+"Software Engineer II" are kept.
+
+## Per-card actions
+
+Each card has three actions (stored per-browser in `localStorage`, no accounts):
+
+- **Applied** (check) — tracks the role; it shows up under the **Applications** tab.
+- **Hide** (eye) — removes the role for **30 days**, then it can resurface.
+- **Report** (flag) — hides that role **and the whole company, permanently**.
+
+Each Hide / Report shows an **Undo** in the toast.
+
 ## Notes & limitations
 
 - **24h window is strict.** If no configured source has posted in the last day,
@@ -89,4 +104,4 @@ Ashby `employmentType`) and falls back to parsing the title.
 - Greenhouse exposes `updated_at` (not a separate created date), so its freshness
   is a close proxy. Lever/Ashby/Remotive/Arbeitnow use true posting dates.
 - Country/work-type are heuristic from free-text locations.
-- Application status is stored per-browser in `localStorage` (no accounts).
+- Applied / hidden / reported lists live per-browser in `localStorage` (no accounts).

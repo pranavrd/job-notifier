@@ -8,7 +8,6 @@ const COUNTRY_LABEL = { Canada: "CA", USA: "US", "Cross-Border": "US/CA", Intern
 const WORKTYPES = ["all", "Remote", "Hybrid", "Onsite"];
 const POSITIONS = ["all", "Internship", "Full-Time", "New Grad", "Contract", "Co-op"];
 const ROLES = ["all", "Software", "AI/ML", "Backend", "Cloud", "Other"];
-const STATUSES = ["Unsaved", "Saved", "Applied", "Interviewing", "Offer", "Rejected"];
 const POS_COLOR = {
   Internship: "var(--aqua)",
   "Full-Time": "var(--blue)",
@@ -16,6 +15,10 @@ const POS_COLOR = {
   Contract: "var(--purple)",
   "Co-op": "var(--orange)",
 };
+
+const HIDE_DAYS = 30;
+const HIDE_MS = HIDE_DAYS * 24 * 3600 * 1000;
+const companyKey = (c) => (c || "").trim().toLowerCase();
 
 const AVATAR = ["--orange", "--yellow", "--aqua", "--blue", "--purple", "--green", "--red"];
 function avatarVar(name) {
@@ -42,6 +45,9 @@ const I = {
   pin: "M12 21s-6-5-6-10a6 6 0 0 1 12 0c0 5-6 10-6 10z",
   ext: "M7 17 17 7M9 7h8v8",
   sync: "M20 11a8 8 0 1 0-2 5.3M20 5v6h-6",
+  check: "M20 6 9 17l-5-5",
+  eyeoff: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7M2 2l20 20",
+  flag: "M5 22V4M5 4h13l-2 4 2 4H5",
 };
 function Icon({ d, size = 15 }) {
   return (
@@ -64,23 +70,29 @@ export default function Dashboard() {
   const [work, setWork] = useState("all");
   const [position, setPosition] = useState("all");
   const [role, setRole] = useState("all");
-  const [pipeline, setPipeline] = useState("all");
   const [sort, setSort] = useState("new");
   const [q, setQ] = useState("");
   const [view, setView] = useState("feed");
   const [shown, setShown] = useState(18);
 
-  const [statuses, setStatuses] = useState({});
-  const [toast, setToast] = useState("");
+  // Per-viewer persisted lists.
+  const [applied, setApplied] = useState({});        // id -> true
+  const [hidden, setHidden] = useState({});          // id -> hideUntil (ms)
+  const [reportedJobs, setReportedJobs] = useState({});     // id -> true
+  const [reportedCos, setReportedCos] = useState({});       // companyKey -> true
+
+  const [toast, setToast] = useState(null);          // { msg, undo }
   const toastTimer = useRef(null);
 
   useEffect(() => {
-    setStatuses(LS.get("jn_status", {}));
+    setApplied(LS.get("jn_applied", {}));
+    setHidden(LS.get("jn_hidden", {}));
+    setReportedJobs(LS.get("jn_reported_jobs", {}));
+    setReportedCos(LS.get("jn_reported_cos", {}));
     const p = LS.get("jn_prefs", null);
     if (p) {
       setCountry(p.country ?? "all"); setWork(p.work ?? "all");
-      setPosition(p.position ?? "all"); setRole(p.role ?? "all");
-      setPipeline(p.pipeline ?? "all"); setSort(p.sort ?? "new");
+      setPosition(p.position ?? "all"); setRole(p.role ?? "all"); setSort(p.sort ?? "new");
     }
     load(false);
   }, []);
@@ -103,42 +115,84 @@ export default function Dashboard() {
 
   function sync() {
     setSyncing(true);
-    load(true).then(() => {
-      setSyncing(false);
-      flash("Synced — showing roles from the last 24 hours");
-    });
+    load(true).then(() => { setSyncing(false); flash("Synced — roles from the last 24 hours"); });
   }
 
-  function flash(msg) {
-    setToast(msg);
+  function flash(msg, undo = null) {
+    setToast({ msg, undo });
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 2600);
+    toastTimer.current = setTimeout(() => setToast(null), undo ? 5000 : 2600);
   }
 
-  function setStatus(id, val) {
-    const next = { ...statuses, [id]: val };
-    setStatuses(next); LS.set("jn_status", next);
-  }
   function savePrefs() {
-    LS.set("jn_prefs", { country, work, position, role, pipeline, sort });
+    LS.set("jn_prefs", { country, work, position, role, sort });
     flash("Preferences saved to this browser");
   }
 
-  const trackedCount = useMemo(
-    () => Object.values(statuses).filter((s) => s && s !== "Unsaved").length,
-    [statuses]
-  );
+  /* ---- per-card actions ---- */
+  function toggleApplied(job) {
+    setApplied((prev) => {
+      const next = { ...prev };
+      if (next[job.id]) delete next[job.id]; else next[job.id] = true;
+      LS.set("jn_applied", next);
+      return next;
+    });
+  }
+  function hideJob(job) {
+    setHidden((prev) => {
+      const next = { ...prev, [job.id]: Date.now() + HIDE_MS };
+      LS.set("jn_hidden", next);
+      return next;
+    });
+    flash(`Hidden for ${HIDE_DAYS} days`, () => {
+      setHidden((prev) => { const n = { ...prev }; delete n[job.id]; LS.set("jn_hidden", n); return n; });
+    });
+  }
+  function reportJob(job) {
+    const key = companyKey(job.company);
+    setReportedJobs((prev) => { const n = { ...prev, [job.id]: true }; LS.set("jn_reported_jobs", n); return n; });
+    setReportedCos((prev) => { const n = { ...prev, [key]: true }; LS.set("jn_reported_cos", n); return n; });
+    flash(`Reported — ${job.company} hidden for good`, () => {
+      setReportedJobs((prev) => { const n = { ...prev }; delete n[job.id]; LS.set("jn_reported_jobs", n); return n; });
+      setReportedCos((prev) => { const n = { ...prev }; delete n[key]; LS.set("jn_reported_cos", n); return n; });
+    });
+  }
 
-  // Enforce the 24h window on the client too, relative to the load/sync time.
+  const appliedCount = useMemo(() => Object.keys(applied).length, [applied]);
+
+  // 24h window relative to load/sync time.
   const windowJobs = useMemo(() => {
     const cutoff = refTime - 24 * 3600 * 1000;
     return jobs.filter((j) => j.postedAt >= cutoff);
   }, [jobs, refTime]);
 
-  // Facet counts for the channel cards (respect everything except country).
-  const facetBase = useMemo(() => {
+  // Drop hidden (still within their month) and reported jobs/companies.
+  const liveJobs = useMemo(() => {
+    const now = Date.now();
+    return windowJobs.filter((j) =>
+      !reportedCos[companyKey(j.company)] && !reportedJobs[j.id] && !(hidden[j.id] > now)
+    );
+  }, [windowJobs, hidden, reportedJobs, reportedCos]);
+
+  const applyFacets = (arr) => {
     const ql = q.trim().toLowerCase();
-    return windowJobs.filter((j) => {
+    return arr.filter((j) => {
+      if (work !== "all" && j.workType !== work) return false;
+      if (position !== "all" && j.position !== position) return false;
+      if (role !== "all" && j.role !== role) return false;
+      if (country !== "all" && j.country !== country) return false;
+      if (ql) {
+        const hay = `${j.company} ${j.title} ${j.location} ${j.role} ${j.position}`.toLowerCase();
+        if (!hay.includes(ql)) return false;
+      }
+      return true;
+    });
+  };
+
+  // Channel counts (feed context, minus country so each card shows its own tally).
+  const counts = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    const base = liveJobs.filter((j) => {
       if (work !== "all" && j.workType !== work) return false;
       if (position !== "all" && j.position !== position) return false;
       if (role !== "all" && j.role !== role) return false;
@@ -148,30 +202,27 @@ export default function Dashboard() {
       }
       return true;
     });
-  }, [windowJobs, work, position, role, q]);
-
-  const counts = useMemo(() => ({
-    all: facetBase.length,
-    Canada: facetBase.filter((j) => j.country === "Canada").length,
-    USA: facetBase.filter((j) => j.country === "USA").length,
-    "Cross-Border": facetBase.filter((j) => j.country === "Cross-Border").length,
-  }), [facetBase]);
+    return {
+      all: base.length,
+      Canada: base.filter((j) => j.country === "Canada").length,
+      USA: base.filter((j) => j.country === "USA").length,
+      "Cross-Border": base.filter((j) => j.country === "Cross-Border").length,
+    };
+  }, [liveJobs, work, position, role, q]);
 
   const list = useMemo(() => {
-    let out = facetBase.filter((j) => {
-      if (country !== "all" && j.country !== country) return false;
-      if (pipeline !== "all" && (statuses[j.id] || "Unsaved") !== pipeline) return false;
-      if (view === "apps" && (statuses[j.id] || "Unsaved") === "Unsaved") return false;
-      return true;
-    });
+    const source = view === "apps"
+      ? windowJobs.filter((j) => applied[j.id] && !reportedCos[companyKey(j.company)] && !reportedJobs[j.id])
+      : liveJobs;
+    let out = applyFacets(source);
     if (sort === "new") out = [...out].sort((a, b) => b.postedAt - a.postedAt);
     else if (sort === "company") out = [...out].sort((a, b) => a.company.localeCompare(b.company));
     else if (sort === "title") out = [...out].sort((a, b) => a.title.localeCompare(b.title));
     return out;
-  }, [facetBase, country, pipeline, view, sort, statuses]);
+  }, [view, liveJobs, windowJobs, applied, reportedCos, reportedJobs, country, work, position, role, q, sort]);
 
   const visible = list.slice(0, shown);
-  useEffect(() => { setShown(18); }, [country, work, position, role, pipeline, q, view]);
+  useEffect(() => { setShown(18); }, [country, work, position, role, q, view]);
 
   return (
     <div className="wrap">
@@ -188,10 +239,10 @@ export default function Dashboard() {
         </div>
         <nav className="navbtns">
           <button className={`nbtn ${view === "feed" ? "on" : ""}`} onClick={() => setView("feed")}>
-            Job Feed <span className="badge">{windowJobs.length}</span>
+            Job Feed <span className="badge">{liveJobs.length}</span>
           </button>
           <button className={`nbtn ${view === "apps" ? "on" : ""}`} onClick={() => setView("apps")}>
-            Applications <span className="badge">{trackedCount}</span>
+            Applications <span className="badge">{appliedCount}</span>
           </button>
           <button className="nbtn" onClick={sync} disabled={syncing}>
             <span className={syncing ? "spin" : ""} style={{ display: "inline-flex" }}><Icon d={I.sync} size={14} /></span>
@@ -227,10 +278,6 @@ export default function Dashboard() {
             <option value="company">Company (A-Z)</option>
             <option value="title">Title (A-Z)</option>
           </select>
-          <select className="ctl" value={pipeline} onChange={(e) => setPipeline(e.target.value)}>
-            <option value="all">Pipeline: all</option>
-            {STATUSES.slice(1).map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
         </div>
 
         <div className="filters">
@@ -249,7 +296,7 @@ export default function Dashboard() {
       <div className="resultbar">
         <div className="count">
           {loading ? "Fetching live roles…"
-            : <><b>{list.length}</b> {view === "apps" ? "tracked" : "matching"} {list.length === 1 ? "role" : "roles"} · posted in the last 24h</>}
+            : <><b>{list.length}</b> {view === "apps" ? "applied" : "matching"} {list.length === 1 ? "role" : "roles"}{view === "apps" ? "" : " · posted in the last 24h"}</>}
         </div>
         <div className="meta">
           {meta.sourcesOk}/{meta.sourcesTotal} sources live · {meta.totalTracked} scanned · synced {relTime(refTime)}
@@ -263,15 +310,19 @@ export default function Dashboard() {
         <div className="grid">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="card skel" />)}</div>
       ) : !list.length ? (
         <div className="empty">
-          No {view === "apps" ? "tracked roles" : "roles posted in the last 24 hours"} match these filters.
-          <div className="empty-sub">The window is strict — press Sync to check again, or widen a filter.</div>
+          {view === "apps"
+            ? "No applications yet. Mark roles Applied to track them here."
+            : "No roles posted in the last 24 hours match these filters."}
+          <div className="empty-sub">
+            {view === "apps" ? "The check button on a card adds it here." : "The window is strict — press Sync to check again, or widen a filter."}
+          </div>
         </div>
       ) : (
         <>
           <section className="grid">
             {visible.map((j) => (
-              <JobCard key={j.id} job={j} status={statuses[j.id] || "Unsaved"}
-                onStatus={(v) => setStatus(j.id, v)} />
+              <JobCard key={j.id} job={j} applied={!!applied[j.id]}
+                onApplied={() => toggleApplied(j)} onHide={() => hideJob(j)} onReport={() => reportJob(j)} />
             ))}
           </section>
           {list.length > shown && (
@@ -286,7 +337,12 @@ export default function Dashboard() {
         Real postings from company job boards (Greenhouse · Lever · Ashby) and free aggregators (Remotive · Arbeitnow).
       </footer>
 
-      <div className={`toast ${toast ? "show" : ""}`}>{toast}</div>
+      {toast && (
+        <div className="toast show">
+          <span>{toast.msg}</span>
+          {toast.undo && <button className="undo" onClick={() => { toast.undo(); setToast(null); }}>Undo</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -317,7 +373,7 @@ function FilterRow({ label, items, value, onChange, render, accent }) {
   );
 }
 
-function JobCard({ job, status, onStatus }) {
+function JobCard({ job, applied, onApplied, onHide, onReport }) {
   return (
     <article className="card">
       <div className="chead">
@@ -344,12 +400,24 @@ function JobCard({ job, status, onStatus }) {
       </div>
 
       <div className="cfoot">
-        <select className="statussel" data-s={status} value={status} onChange={(e) => onStatus(e.target.value)}>
-          {STATUSES.map((s) => <option key={s} value={s}>{s === "Unsaved" ? "Set status" : s}</option>)}
-        </select>
         <a className="apply" href={job.url} target="_blank" rel="noopener noreferrer">
           Apply <Icon d={I.ext} size={12} />
         </a>
+        <div className="actions">
+          <button className={`abtn applied ${applied ? "on" : ""}`} onClick={onApplied}
+            aria-label={applied ? "Applied — click to unmark" : "Mark as applied"}
+            title={applied ? "Applied (click to unmark)" : "Mark as applied"}>
+            <Icon d={I.check} size={15} />
+          </button>
+          <button className="abtn hide" onClick={onHide}
+            aria-label="Hide for a month" title="Hide this role for 30 days">
+            <Icon d={I.eyeoff} size={15} />
+          </button>
+          <button className="abtn report" onClick={onReport}
+            aria-label="Report and hide company forever" title="Report — never show this job or company again">
+            <Icon d={I.flag} size={15} />
+          </button>
+        </div>
       </div>
     </article>
   );
