@@ -20,6 +20,9 @@ const HIDE_DAYS = 30;
 const HIDE_MS = HIDE_DAYS * 24 * 3600 * 1000;
 const companyKey = (c) => (c || "").trim().toLowerCase();
 
+// Window slider stops (hours). Default index 5 -> 24h.
+const WINDOW_STEPS = [1, 2, 3, 6, 12, 24, 36, 48];
+
 const AVATAR = ["--orange", "--yellow", "--aqua", "--blue", "--purple", "--green", "--red"];
 function avatarVar(name) {
   let h = 0;
@@ -74,6 +77,7 @@ export default function Dashboard() {
   const [q, setQ] = useState("");
   const [view, setView] = useState("feed");
   const [shown, setShown] = useState(18);
+  const [windowHours, setWindowHours] = useState(24);
 
   // Per-viewer persisted lists.
   const [applied, setApplied] = useState({});        // id -> true
@@ -93,6 +97,7 @@ export default function Dashboard() {
     if (p) {
       setCountry(p.country ?? "all"); setWork(p.work ?? "all");
       setPosition(p.position ?? "all"); setRole(p.role ?? "all"); setSort(p.sort ?? "new");
+      if (WINDOW_STEPS.includes(p.windowHours)) setWindowHours(p.windowHours);
     }
     load(false);
   }, []);
@@ -125,7 +130,7 @@ export default function Dashboard() {
   }
 
   function savePrefs() {
-    LS.set("jn_prefs", { country, work, position, role, sort });
+    LS.set("jn_prefs", { country, work, position, role, sort, windowHours });
     flash("Preferences saved to this browser");
   }
 
@@ -162,11 +167,11 @@ export default function Dashboard() {
 
   const appliedCount = useMemo(() => Object.keys(applied).length, [applied]);
 
-  // 24h window relative to load/sync time.
+  // Selected window, relative to load/sync time.
   const windowJobs = useMemo(() => {
-    const cutoff = refTime - 24 * 3600 * 1000;
+    const cutoff = refTime - windowHours * 3600 * 1000;
     return jobs.filter((j) => j.postedAt >= cutoff);
-  }, [jobs, refTime]);
+  }, [jobs, refTime, windowHours]);
 
   // The working feed drops anything applied (it moves to Applications), hidden
   // (still within its month), or reported (job or whole company).
@@ -225,7 +230,7 @@ export default function Dashboard() {
   }, [view, liveJobs, windowJobs, applied, reportedCos, reportedJobs, country, work, position, role, q, sort]);
 
   const visible = list.slice(0, shown);
-  useEffect(() => { setShown(18); }, [country, work, position, role, q, view]);
+  useEffect(() => { setShown(18); }, [country, work, position, role, q, view, windowHours]);
 
   return (
     <div className="wrap">
@@ -237,7 +242,7 @@ export default function Dashboard() {
           </div>
           <div>
             <h1>JobNotifier <span className="ver">v2</span></h1>
-            <p><span className="dot" /> Live tech &amp; AI roles · last 24 hours</p>
+            <p><span className="dot" /> Live tech &amp; AI roles · last {windowHours}h</p>
           </div>
         </div>
         <nav className="navbtns">
@@ -257,7 +262,7 @@ export default function Dashboard() {
 
       {/* channel cards */}
       <section className="stats">
-        <StatCard label="All Jobs" value={counts.all} sub="last 24h" tone="--orange"
+        <StatCard label="All Jobs" value={counts.all} sub={`last ${windowHours}h`} tone="--orange"
           active={country === "all"} onClick={() => setCountry("all")} />
         <StatCard label="Canada" value={counts.Canada} sub="Toronto · Waterloo · Remote CA" tone="--aqua"
           active={country === "Canada"} onClick={() => setCountry("Canada")} />
@@ -283,6 +288,23 @@ export default function Dashboard() {
           </select>
         </div>
 
+        <div className="windowrow">
+          <span className="flabel">Window</span>
+          <div className="wwrap">
+            <input type="range" className="wslider" min={0} max={WINDOW_STEPS.length - 1} step={1}
+              value={WINDOW_STEPS.indexOf(windowHours)}
+              onChange={(e) => setWindowHours(WINDOW_STEPS[+e.target.value])}
+              aria-label="Show roles posted within this many hours" />
+            <div className="wticks">
+              {WINDOW_STEPS.map((h) => (
+                <button key={h} type="button" className={`wtick ${h === windowHours ? "on" : ""}`}
+                  onClick={() => setWindowHours(h)}>{h}h</button>
+              ))}
+            </div>
+          </div>
+          <span className="wval">last {windowHours}h</span>
+        </div>
+
         <div className="filters">
           <FilterRow label="Country" items={COUNTRIES} value={country} onChange={setCountry}
             render={(v) => v === "all" ? "All countries" : v} />
@@ -299,7 +321,7 @@ export default function Dashboard() {
       <div className="resultbar">
         <div className="count">
           {loading ? "Fetching live roles…"
-            : <><b>{list.length}</b> {view === "apps" ? "applied" : "matching"} {list.length === 1 ? "role" : "roles"}{view === "apps" ? "" : " · posted in the last 24h"}</>}
+            : <><b>{list.length}</b> {view === "apps" ? "applied" : "matching"} {list.length === 1 ? "role" : "roles"}{view === "apps" ? "" : ` · posted in the last ${windowHours}h`}</>}
         </div>
         <div className="meta">
           {meta.sourcesOk}/{meta.sourcesTotal} sources live · {meta.totalTracked} scanned · synced {relTime(refTime)}

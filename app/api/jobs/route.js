@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
-import { fetchAllJobs, withinWindow, WINDOW_HOURS } from "../../../lib/fetchers.js";
+import { fetchAllJobs, withinWindow } from "../../../lib/fetchers.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+// The client's window slider goes up to 48h, so the API returns the full 48h
+// superset and the browser narrows it to the selected window with no refetch.
+const MAX_WINDOW_HOURS = 48;
 
 // Small in-memory cache so rapid reloads don't re-hit ~40 upstream APIs.
 // The 24h window is applied AFTER the cache, relative to the request time,
@@ -30,13 +34,13 @@ export async function GET(request) {
     }
   }
 
-  const jobs = withinWindow(raw.jobs, now, WINDOW_HOURS);
+  const jobs = withinWindow(raw.jobs, now, MAX_WINDOW_HOURS, 600, 15);
 
   return NextResponse.json(
     {
       jobs,
       fetchedAt: now,
-      windowHours: WINDOW_HOURS,
+      windowHours: MAX_WINDOW_HOURS,
       totalTracked: raw.jobs.length,
       sourcesOk: raw.sourcesOk,
       sourcesTotal: raw.sourcesTotal,

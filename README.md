@@ -81,6 +81,16 @@ Classification rules (the 5 role buckets and 6 position types) live in
 titles. Position type prefers the ATS's structured field (Lever `commitment`,
 Ashby `employmentType`) and falls back to parsing the title.
 
+**Window slider:** a slider (1h · 2h · 3h · 6h · 12h · 24h · 36h · 48h, default
+24h) sets how far back "posted" reaches, relative to page load / last Sync. The
+API returns the full 48h superset and the browser narrows it instantly — no
+refetch when you drag the slider.
+
+**Sources are H-1B-gated.** Every company in `lib/sources.js` was vetted to have
+a live ATS board **and** recent H-1B/LCA filings (2024+) in the DOL disclosure
+data (h1bdata.info, the data behind the USCIS H-1B Employer Data Hub). Recent
+filings are used to weed out programs that appear paused.
+
 **Seniority filter:** this board targets early-career / individual-contributor
 roles, so titles marked Senior / Staff / Principal / Lead / Manager / Director /
 VP / Architect (and similar) are dropped in `lib/classify.js`. Mid-levels like
