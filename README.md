@@ -76,15 +76,24 @@ Everything lives in [`lib/sources.js`](lib/sources.js):
   Find host/siteNumber in a company's careers-site network calls.
 - `AGGREGATORS` — free JSON endpoints.
 
-**iCIMS is not supported:** its career portals are HTML/SPA with no public JSON
-feed, and its REST API needs per-customer credentials — fetching it would mean
-brittle HTML scraping, so it was left out on purpose.
+**Not supported (no usable public, dated jobs JSON):** **iCIMS** (HTML/SPA portals;
+REST API needs per-customer credentials), **Wellfound** (`/graphql` and `/sitemap`
+behind a Cloudflare "Security Check", 403), and **workatastartup.com** (no JSON
+jobs API; the HTML page bot-walls 200→406 and job details require login). Rather
+than scrape those front-doors, the feed reaches the startups behind them **directly
+through their own Greenhouse/Lever/Ashby boards** — see the YC harvest below.
 
-The list currently holds ~123 companies (≈61 Greenhouse, ≈8 Lever, ≈42 Ashby,
-12 Workday) plus 2 aggregators — every one vetted for a live board **and** recent
-H-1B filings. There is no hard limit; adding more is just more entries. With
-~60 Greenhouse boards read at `?content=true`, a cold fetch pulls a lot of data
-(a few seconds); results are cached 90s so it only happens on a cache miss.
+**YC harvest.** Most Y Combinator / Wellfound startups run a public ATS board under
+the hood. The `GREENHOUSE`/`LEVER`/`ASHBY` lists include a large block sourced by
+scanning YC's currently-hiring companies (`yc-oss/api`) for a live board, then
+applying the sponsorship gate (below).
+
+The list currently holds ~263 companies (≈88 Greenhouse, ≈20 Lever, ≈142 Ashby,
+12 Workday, 1 Oracle Cloud) plus 2 aggregators — every one vetted for a live board
+**and** the sponsorship gate. There is no hard limit; adding more is just more
+entries. With ~88 Greenhouse boards read at `?content=true`, a cold fetch pulls a
+lot of data (~8s for all ~265 sources in parallel); results are cached 90s so it
+only happens on a cache miss.
 
 Classification rules (the 5 role buckets and 6 position types) live in
 [`lib/classify.js`](lib/classify.js).
@@ -107,10 +116,14 @@ Ashby `employmentType`) and falls back to parsing the title.
 API returns the full 48h superset and the browser narrows it instantly — no
 refetch when you drag the slider.
 
-**Sources are H-1B-gated.** Every company in `lib/sources.js` was vetted to have
-a live ATS board **and** recent H-1B/LCA filings (2024+) in the DOL disclosure
-data (h1bdata.info, the data behind the USCIS H-1B Employer Data Hub). Recent
-filings are used to weed out programs that appear paused.
+**Sources are sponsorship-gated.** Every company in `lib/sources.js` has a live ATS
+board **and** clears a sponsorship gate: it EITHER has a name-verified recent
+H-1B/LCA filing (2024+) in the DOL disclosure data (h1bdata.info, the data behind
+the USCIS H-1B Employer Data Hub — recent filings weed out paused programs), OR its
+own postings state it sponsors work visas (now, or case-by-case). Companies whose
+postings say sponsorship is *not* available, with no recent filing, are excluded.
+Filings are matched on normalized employer name so a generically-named startup
+(e.g. "Atlas") isn't credited with an unrelated big filer's petitions.
 
 **Seniority filter:** this board targets early-career / individual-contributor
 roles, so titles marked Senior / Staff / Principal / Lead / Manager / Director /
