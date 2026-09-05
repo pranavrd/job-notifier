@@ -15,6 +15,7 @@ Browser ──► /api/jobs (Next route, server-side)
                  ├─ Lever postings API      (company careers data, per company)
                  ├─ Ashby job-board API     (company careers data, per company)
                  ├─ Workday CXS API         (big sponsors off the public boards)
+                 ├─ Oracle Cloud CE API     (Fusion Recruiting, public JSON)
                  ├─ Remotive API            (free remote-jobs aggregator)
                  └─ Arbeitnow API           (free job-board aggregator)
                  │
@@ -69,7 +70,15 @@ Everything lives in [`lib/sources.js`](lib/sources.js):
   is how the feed reaches big H-1B sponsors that have no Greenhouse/Lever/Ashby
   board. Workday exposes only a **relative** post date, so these roles are
   day-resolution and surface only at the 24h/36h/48h window positions.
+- `ORACLE` — `{name, host, siteNumber}` configs for Oracle Cloud (Fusion)
+  Recruiting boards, whose candidate REST API is public. `PostedDate` is a bare
+  date, so these are day-resolution too (24h+ only). Seeded with Oracle itself.
+  Find host/siteNumber in a company's careers-site network calls.
 - `AGGREGATORS` — free JSON endpoints.
+
+**iCIMS is not supported:** its career portals are HTML/SPA with no public JSON
+feed, and its REST API needs per-customer credentials — fetching it would mean
+brittle HTML scraping, so it was left out on purpose.
 
 The list currently holds ~123 companies (≈61 Greenhouse, ≈8 Lever, ≈42 Ashby,
 12 Workday) plus 2 aggregators — every one vetted for a live board **and** recent
