@@ -72,8 +72,11 @@ Everything lives in [`lib/sources.js`](lib/sources.js):
   day-resolution and surface only at the 24h/36h/48h window positions.
 - `ORACLE` — `{name, host, siteNumber}` configs for Oracle Cloud (Fusion)
   Recruiting boards, whose candidate REST API is public. `PostedDate` is a bare
-  date, so these are day-resolution too (24h+ only). Seeded with Oracle itself.
-  Find host/siteNumber in a company's careers-site network calls.
+  date, so these are day-resolution too (24h+ only). There's no central directory
+  of Oracle customers, so this list is hand-curated: each is a verified H-1B
+  sponsor (Texas Instruments, JPMorgan Chase, Nokia, Coherent, Cantor Fitzgerald,
+  Vertiv, Computershare, Oracle). Find a new one's host/siteNumber in the
+  `.../hcmUI/CandidateExperience/en/sites/<siteNumber>/...` URL on its careers page.
 - `AGGREGATORS` — free JSON endpoints.
 
 **Not supported (no usable public, dated jobs JSON):** **iCIMS** (HTML/SPA portals;
@@ -88,11 +91,11 @@ the hood. The `GREENHOUSE`/`LEVER`/`ASHBY` lists include a large block sourced b
 scanning YC's currently-hiring companies (`yc-oss/api`) for a live board, then
 applying the sponsorship gate (below).
 
-The list currently holds ~263 companies (≈88 Greenhouse, ≈20 Lever, ≈142 Ashby,
-12 Workday, 1 Oracle Cloud) plus 2 aggregators — every one vetted for a live board
+The list currently holds ~270 companies (≈88 Greenhouse, ≈20 Lever, ≈142 Ashby,
+12 Workday, 8 Oracle Cloud) plus 2 aggregators — every one vetted for a live board
 **and** the sponsorship gate. There is no hard limit; adding more is just more
 entries. With ~88 Greenhouse boards read at `?content=true`, a cold fetch pulls a
-lot of data (~8s for all ~265 sources in parallel); results are cached 90s so it
+lot of data (~7s for all ~272 sources in parallel); results are cached 90s so it
 only happens on a cache miss.
 
 Classification rules (the 5 role buckets and 6 position types) live in
