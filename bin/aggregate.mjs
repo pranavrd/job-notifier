@@ -29,12 +29,8 @@
 // package.json has "type": "module". Uses global fetch (Node 18+) and hits the
 // network, so a few seconds per run is normal.
 
-import { fetchAllJobs, withinWindow, WINDOW_HOURS } from "../lib/fetchers.js";
-import { ROLES } from "../lib/classify.js";
-
-// detectCountry() collapses locations into these four; there is no exported
-// list, so keep it in step with lib/classify.js:detectCountry.
-const COUNTRIES = ["USA", "Canada", "Cross-Border", "International"];
+import { fetchAllJobs, withinWindow } from "../lib/fetchers.js";
+import { ROLES, COUNTRIES, WINDOW_HOURS } from "../lib/config.js";
 
 function parseArgs(argv) {
   const opts = { window: WINDOW_HOURS, role: null, country: null, json: false, help: false };

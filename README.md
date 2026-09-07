@@ -9,8 +9,10 @@ Built with Next.js (App Router). No API keys, no database, deploys to Vercel as-
 ## How it works
 
 ```
-Browser ──► /api/jobs (Next route, server-side)
-                 │
+Browser  ──► /api/jobs  (JSON) ─┐
+RSS reader ─► /api/feed (RSS)  ─┴─► getCachedJobs (90s cache, stale-while-revalidate)
+                                        │
+                                        ▼  fetchAllJobs — one adapter per ATS (lib/adapters.js)
                  ├─ Greenhouse boards API   (company careers data, per company)
                  ├─ Lever postings API      (company careers data, per company)
                  ├─ Ashby job-board API     (company careers data, per company)
@@ -18,10 +20,10 @@ Browser ──► /api/jobs (Next route, server-side)
                  ├─ Oracle Cloud CE API     (Fusion Recruiting, public JSON)
                  ├─ Remotive API            (free remote-jobs aggregator)
                  └─ Arbeitnow API           (free job-board aggregator)
-                 │
-          normalize → classify role/position → detect country/work-type
-                 │
-          keep only postings from the trailing 24h → dedupe → sort newest-first
+                                        │
+          normalize → classify role/position → detect country/work-type → tag H-1B
+                                        │
+          dedupe (exact id, then cross-source) → keep trailing window → sort newest-first
 ```
 
 All fetching happens **server-side**, so there are no CORS problems and a slow or
@@ -59,7 +61,9 @@ npm run build && npm start   # production build
 
 ## Configure the feed
 
-Everything lives in [`lib/sources.js`](lib/sources.js):
+The **sources** live in [`lib/sources.js`](lib/sources.js); the **tunables**
+(window, caps, timeout, cache TTL, filter buckets) live in
+[`lib/config.js`](lib/config.js) and are shared by every layer.
 
 - `GREENHOUSE`, `LEVER`, `ASHBY` — arrays of company **board tokens** (exact
   post dates). Add a company by finding its token (e.g. `boards.greenhouse.io/<token>`,
@@ -144,6 +148,31 @@ Each card has three actions (stored per-browser in `localStorage`, no accounts):
 
 Each Hide / Report shows an **Undo** in the toast.
 
+## Notifications (RSS)
+
+The reason the repo is named *JobNotifier*: subscribe once and your reader tells
+you about new matching roles — no accounts, no secrets, no cron, no database, the
+same deploy-as-is ethos as the rest of the app.
+
+- **Feed endpoint:** `/api/feed` emits the current feed as RSS 2.0. It's
+  filterable via query params that map to the same buckets as the UI:
+  `/api/feed?window=24&role=AI/ML&country=USA&work=Remote`. Unknown values are
+  ignored (a hand-typed URL still returns a feed). Item `guid`s are the stable
+  job `id`, so a reader shows each posting once and flags genuinely new ones.
+- **Subscribe button:** the nav's **Subscribe** button builds a feed URL that
+  mirrors your *current* filters and copies it to the clipboard (falling back to
+  opening it) — set the filters you care about, then paste the URL into your
+  reader.
+- **Auto-discovery:** the page advertises `/api/feed` via a `<link
+  rel="alternate" type="application/rss+xml">`, so readers pointed at the site
+  find it automatically.
+
+**H-1B badge.** Cards for name-verified recent H-1B/LCA filers show a small
+green **H-1B** tag (the WORKDAY + ORACLE lists and the board tokens tagged in
+`lib/sources.js`, mapped in [`lib/sponsors.js`](lib/sponsors.js)). Every other
+company in the feed still cleared the sponsorship gate — the badge just marks the
+ones whose filings were individually verified, so it never over-promises.
+
 ## Reuse
 
 The feed is built around one small, stable data contract, so the fetch/normalize
@@ -170,6 +199,7 @@ to the same shape:
   source,    // "Greenhouse" | "Lever" | "Ashby" | "Workday" | "Oracle Cloud" | "Remotive" | "Arbeitnow"
   postedAt,  // epoch ms
   precision, // "exact" | "day"
+  sponsorship, // "verified" (name-verified recent H-1B/LCA filer) | "listed" (gate-cleared)
 }
 ```
 
@@ -181,9 +211,50 @@ surfaces only at the 24h / 36h / 48h window positions — never in the sub-24h
 slider, where its freshness can't be verified. `normalize()` drops anything with
 no title, no `postedAt`, or a non-tech/AI title (returns `null`).
 
-`fetchAllJobs()` returns `{ jobs, sourcesOk, sourcesTotal }`; `withinWindow(jobs,
+`fetchAllJobs()` returns `{ jobs, sourcesOk, sourcesTotal, sources }` (the last
+is a per-source health array, surfaced by `/api/jobs?debug=1`); `withinWindow(jobs,
 now, hours, cap, perCompany)` applies the trailing window, newest-first sort, and
-the per-company / overall caps.
+the per-company / overall caps. Both the JSON API and the RSS feed go through
+`getCachedJobs()`, a 90s in-memory cache with stale-while-revalidate, so the two
+endpoints share one upstream fan-out.
+
+### Where the knobs live
+
+All tunables and shared vocabularies are defined once in
+[`lib/config.js`](lib/config.js) and imported by the server, the client, and the
+sibling tools — so the window sizes, caps, timeout, and the role/position/country
+filter buckets can never drift between them. Change a cap or add a filter bucket
+there and every layer follows.
+
+### Adding a new ATS
+
+Every source family is expressed as one **adapter** in
+[`lib/adapters.js`](lib/adapters.js) with a uniform contract:
+
+```js
+{
+  id,               // stable key, e.g. "greenhouse"
+  configs,          // the array of per-board configs from lib/sources.js
+  label(config),    // per-task id for the sources[] health report
+  async list(config),          // fetch → array of raw postings
+  normalize(raw, config, ctx), // map one raw posting via normalize()
+}
+```
+
+The orchestrator in `lib/fetchers.js` iterates `ADAPTERS × configs`, so a brand
+new ATS is one adapter object appended to `ADAPTERS` — no orchestrator changes.
+The mapping/dedupe core is in [`lib/normalize.js`](lib/normalize.js) (pure, no
+network), so it can be unit-tested and reused without the fetch layer.
+
+### Cross-source dedup
+
+Jobs are deduped in two passes. `dedupeExact` drops repeats of the same `id`
+(company + title + location [+ req uid]). `dedupeCrossSource` then removes
+**aggregator echoes** — the same role that a company's own board already carries
+but Remotive/Arbeitnow also re-list (they differ in location text and url, so the
+exact pass misses them). It's conservative: every company-board posting is kept
+(so a company's distinct same-title reqs on its own board all survive), and only
+redundant aggregator copies are dropped.
 
 ### Add a company
 
@@ -224,23 +295,41 @@ Two headless tools reuse the same fetch/normalize layer (no server, no browser):
   Hits each source once and reports which are live, empty, or failing — run it
   after editing `lib/sources.js` to catch dead tokens/hosts before they ship.
 
-### Deferred / roadmap
+- **RSS feed** — subscribe to the live feed (or a filtered slice) from any reader:
 
-Coupled refactors intentionally left out to keep this pass small:
+  ```
+  /api/feed?window=24&role=AI/ML&country=USA&work=Remote
+  ```
 
-- **Single source-of-truth config** — one module that both the app and the
-  sibling tools import for sources + tunables (window, caps, timeout), instead of
-  the current split between `lib/sources.js` and `lib/fetchers.js`.
-- **Full ATS adapter interface** — a uniform `{ id, list(config), normalize(raw) }`
-  contract so a new ATS is one adapter file, not another `from*` function wired
-  into the orchestrator.
-- **Notifications** — push/email/Slack on new matching postings (the reason the
-  repo is named *JobNotifier*).
-- **Cross-source dedup** — the same role listed on a company board *and* an
-  aggregator is currently deduped only by `id` (company + title + location);
-  fuzzier matching would collapse more true duplicates.
-- **H-1B enrichment** — surface the sponsorship signal per card (it's used today
-  only as an offline inclusion gate, not shown in the feed).
+  Same fetch/normalize/window layer, rendered as RSS 2.0 (see "Notifications"
+  above). No server of your own needed — it's a route in this app.
+
+### Shipped from the roadmap
+
+The coupled refactors that were previously deferred now live in the tree:
+
+- **Single source-of-truth config** — [`lib/config.js`](lib/config.js) holds
+  every tunable (window, caps, timeout, cache TTL) and the filter vocabularies;
+  the server, the client, and the sibling tools all import from it.
+- **Full ATS adapter interface** — [`lib/adapters.js`](lib/adapters.js): each
+  ATS is one adapter object; the orchestrator iterates `ADAPTERS × configs`.
+- **Cross-source dedup** — `dedupeCrossSource` in
+  [`lib/normalize.js`](lib/normalize.js) drops aggregator echoes of roles the
+  company's own board already carries.
+- **H-1B enrichment** — the `sponsorship` field on every job, shown as the H-1B
+  card badge ([`lib/sponsors.js`](lib/sponsors.js)).
+- **Notifications** — the RSS feed above.
+
+### Still deferred
+
+- **Push notifications (email / Slack)** — RSS covers "notify me" with zero
+  config; email/Slack push additionally needs a scheduler (e.g. Vercel Cron) plus
+  a per-user destination + secret, which breaks the no-env-vars, no-accounts
+  promise. Left as an opt-in extension: a cron route that diffs the feed against a
+  last-seen set and POSTs new roles to a webhook.
+- **Fuzzier dedup** — cross-source dedup is deliberately conservative (exact
+  company + title). Token-overlap / edit-distance matching would collapse more
+  near-duplicates, at the risk of merging genuinely distinct reqs.
 
 ## Notes & limitations
 

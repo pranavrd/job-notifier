@@ -7,6 +7,7 @@ import {
   hashId,
   WINDOW_HOURS,
 } from "../lib/fetchers.js";
+import { PER_COMPANY_CAP } from "../lib/config.js";
 
 const HOUR = 3600 * 1000;
 
@@ -28,12 +29,12 @@ describe("withinWindow", () => {
     expect(withinWindow(jobs, now, WINDOW_HOURS)).toHaveLength(0);
   });
 
-  it("enforces the per-company cap (default 12)", () => {
-    const jobs = Array.from({ length: 15 }, (_, i) => ({
+  it("enforces the per-company cap (config PER_COMPANY_CAP)", () => {
+    const jobs = Array.from({ length: PER_COMPANY_CAP + 5 }, (_, i) => ({
       company: "Acme",
-      postedAt: now - (i + 1) * 60 * 1000, // all within the last 15 minutes
+      postedAt: now - (i + 1) * 60 * 1000, // all within the last (cap+5) minutes
     }));
-    expect(withinWindow(jobs, now)).toHaveLength(12);
+    expect(withinWindow(jobs, now)).toHaveLength(PER_COMPANY_CAP);
   });
 
   it("drops future-dated jobs beyond the +5min skew guard", () => {
@@ -126,6 +127,11 @@ describe("normalize", () => {
   it("propagates precision, defaulting to 'exact'", () => {
     expect(normalize(base).precision).toBe("exact");
     expect(normalize({ ...base, precision: "day" }).precision).toBe("day");
+  });
+
+  it("tags sponsorship: 'verified' for a known H-1B filer, 'listed' otherwise", () => {
+    expect(normalize({ ...base, company: "Nvidia" }).sponsorship).toBe("verified");
+    expect(normalize({ ...base, company: "Acme" }).sponsorship).toBe("listed");
   });
 
   it("returns null for a non-tech / senior title (null role)", () => {

@@ -1,13 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ROLES as ROLE_BUCKETS,
+  POSITIONS as POSITION_TYPES,
+  COUNTRIES as COUNTRY_CHANNELS,
+  WORKTYPES as WORK_TYPES,
+  WINDOW_STEPS as CFG_WINDOW_STEPS,
+  HIDE_DAYS as CFG_HIDE_DAYS,
+} from "../lib/config.js";
 
 /* ---- filter vocabularies (drive the whole feed) ------------------------- */
-const COUNTRIES = ["all", "Canada", "USA", "Cross-Border", "International"];
+// The canonical buckets live in lib/config.js (shared with the server + CLI);
+// the UI just prefixes an "all" sentinel for its filter pills.
+const COUNTRIES = ["all", ...COUNTRY_CHANNELS];
 const COUNTRY_LABEL = { Canada: "CA", USA: "US", "Cross-Border": "US/CA", International: "INTL" };
-const WORKTYPES = ["all", "Remote", "Hybrid", "Onsite"];
-const POSITIONS = ["all", "Internship", "Full-Time", "New Grad", "Contract", "Co-op"];
-const ROLES = ["all", "Software", "AI/ML", "Backend", "Cloud", "Other"];
+const WORKTYPES = ["all", ...WORK_TYPES];
+const POSITIONS = ["all", ...POSITION_TYPES];
+const ROLES = ["all", ...ROLE_BUCKETS];
 const SORTS = ["new", "company", "title"];
 const POS_COLOR = {
   Internship: "var(--aqua)",
@@ -17,12 +27,12 @@ const POS_COLOR = {
   "Co-op": "var(--orange)",
 };
 
-const HIDE_DAYS = 30;
+const HIDE_DAYS = CFG_HIDE_DAYS;
 const HIDE_MS = HIDE_DAYS * 24 * 3600 * 1000;
 const companyKey = (c) => (c || "").trim().toLowerCase();
 
 // Window slider stops (hours). Default index 5 -> 24h.
-const WINDOW_STEPS = [1, 2, 3, 6, 12, 24, 36, 48];
+const WINDOW_STEPS = CFG_WINDOW_STEPS;
 
 const AVATAR = ["--orange", "--yellow", "--aqua", "--blue", "--purple", "--green", "--red"];
 function avatarVar(name) {
@@ -68,6 +78,7 @@ const I = {
   check: "M20 6 9 17l-5-5",
   eyeoff: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7M2 2l20 20",
   flag: "M5 22V4M5 4h13l-2 4 2 4H5",
+  rss: "M5 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM5 11a8 8 0 0 1 8 8M5 5a14 14 0 0 1 14 14",
 };
 function Icon({ d, size = 15 }) {
   return (
@@ -146,6 +157,28 @@ export default function Dashboard() {
   function savePrefs() {
     LS.set("jn_prefs", { country, work, position, role, sort, windowHours });
     flash("Preferences saved to this browser");
+  }
+
+  // Build an RSS feed URL that mirrors the current filters and hand it to the
+  // user's reader — that's the "notify me" path: no accounts, no backend, just
+  // subscribe once and the reader polls for new matching roles. Copy to the
+  // clipboard when we can; fall back to opening the feed in a new tab.
+  function subscribeRss() {
+    const params = new URLSearchParams();
+    if (windowHours !== 24) params.set("window", String(windowHours));
+    if (role !== "all") params.set("role", role);
+    if (country !== "all") params.set("country", country);
+    if (work !== "all") params.set("work", work);
+    const qs = params.toString();
+    const feedUrl = `${window.location.origin}/api/feed${qs ? `?${qs}` : ""}`;
+    const openIt = () => window.open(feedUrl, "_blank", "noopener");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(feedUrl)
+        .then(() => flash("RSS feed URL copied — paste it into your reader"))
+        .catch(openIt);
+    } else {
+      openIt();
+    }
   }
 
   // Normalize a prefs object against the known vocabularies so a hand-edited or
@@ -365,6 +398,9 @@ export default function Dashboard() {
             Import
           </button>
           <input ref={fileRef} type="file" accept="application/json,.json" onChange={importState} style={{ display: "none" }} />
+          <button className="nbtn" onClick={subscribeRss} title="Copy an RSS feed URL for the current filters — subscribe in any reader to get notified of new roles">
+            <Icon d={I.rss} size={14} /> Subscribe
+          </button>
           <span className="user"><span className="uava">A</span>Alex</span>
         </nav>
       </header>
@@ -518,6 +554,9 @@ function JobCard({ job, refTime, applied, onApplied, onHide, onReport }) {
             <span className="ctag">{COUNTRY_LABEL[job.country] || job.country}</span>
             <span className="crole">{job.role}</span>
             <span className="csrc">{job.source}</span>
+            {job.sponsorship === "verified" && (
+              <span className="ch1b" title="Name-verified recent H-1B/LCA filer (DOL disclosure data). Others in the feed still cleared the sponsorship gate.">H-1B</span>
+            )}
           </div>
         </div>
         <span className="cpos" style={{ color: POS_COLOR[job.position] || "var(--fg3)", borderColor: POS_COLOR[job.position] || "var(--border)" }}>
