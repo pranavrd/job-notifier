@@ -144,6 +144,104 @@ Each card has three actions (stored per-browser in `localStorage`, no accounts):
 
 Each Hide / Report shows an **Undo** in the toast.
 
+## Reuse
+
+The feed is built around one small, stable data contract, so the fetch/normalize
+layer is reusable on its own (a CLI, a cron job, a Slack bot) without the Next.js
+UI. Types are documented as JSDoc `@typedef`s in [`lib/types.js`](lib/types.js) —
+no runtime code, just hints editors and `tsc --checkJs` pick up.
+
+### The normalized Job contract
+
+Every source is reduced by `normalize()` in [`lib/fetchers.js`](lib/fetchers.js)
+to the same shape:
+
+```js
+{
+  id,        // stable hash of company + title + location (+ req uid); also the dedupe key
+  company,   // display name
+  title,     // trimmed
+  url,       // absolute apply/posting URL
+  location,  // free-text, "Not specified" if missing
+  country,   // "USA" | "Canada" | "Cross-Border" | "International"
+  workType,  // "Remote" | "Hybrid" | "Onsite"
+  role,      // "Software" | "AI/ML" | "Backend" | "Cloud" | "Other"
+  position,  // "Internship" | "Full-Time" | "New Grad" | "Contract" | "Co-op"
+  source,    // "Greenhouse" | "Lever" | "Ashby" | "Workday" | "Oracle Cloud" | "Remotive" | "Arbeitnow"
+  postedAt,  // epoch ms
+  precision, // "exact" | "day"
+}
+```
+
+**`precision`** is the freshness contract. `"exact"` means a real per-posting
+timestamp (Greenhouse `first_published`, Lever `createdAt`, Ashby `publishedAt`,
+aggregator publish dates). `"day"` means the source only exposes a relative or
+bare date (Workday, Oracle Cloud), so `postedAt` is floored to ~23h and the role
+surfaces only at the 24h / 36h / 48h window positions — never in the sub-24h
+slider, where its freshness can't be verified. `normalize()` drops anything with
+no title, no `postedAt`, or a non-tech/AI title (returns `null`).
+
+`fetchAllJobs()` returns `{ jobs, sourcesOk, sourcesTotal }`; `withinWindow(jobs,
+now, hours, cap, perCompany)` applies the trailing window, newest-first sort, and
+the per-company / overall caps.
+
+### Add a company
+
+All config is in [`lib/sources.js`](lib/sources.js) (see also "Configure the
+feed" above for how to find each value):
+
+- **Greenhouse / Lever / Ashby** — arrays of string **board tokens**. Drop the
+  token into `GREENHOUSE`, `LEVER`, or `ASHBY`. These give exact post dates.
+- **Workday** — push a `{ name, host, tenant, site }` object onto `WORKDAY`.
+- **Oracle Cloud** — push a `{ name, host, siteNumber }` object onto `ORACLE`.
+- **Aggregators** — push a `{ kind, url }` object onto `AGGREGATORS` (`kind` is
+  `"remotive"` or `"arbeitnow"`).
+
+No other file needs touching — the orchestrator in `lib/fetchers.js` iterates
+each list. Bad tokens/hosts fail their one fetch and are dropped; the feed keeps
+going.
+
+### Sibling tools
+
+Two headless tools reuse the same fetch/normalize layer (no server, no browser):
+
+- **CLI feed** — print the current feed to your terminal:
+
+  ```bash
+  node bin/aggregate.mjs --window 24 --role AI/ML --country USA
+  node bin/aggregate.mjs --window 48 --json        # machine-readable
+  ```
+
+  `--window` (hours), `--role`, and `--country` map to the same values as the UI
+  filters; `--json` emits the raw normalized `Job[]` for piping.
+
+- **Source health check** — verify every configured board still returns jobs:
+
+  ```bash
+  node scripts/vet.mjs
+  ```
+
+  Hits each source once and reports which are live, empty, or failing — run it
+  after editing `lib/sources.js` to catch dead tokens/hosts before they ship.
+
+### Deferred / roadmap
+
+Coupled refactors intentionally left out to keep this pass small:
+
+- **Single source-of-truth config** — one module that both the app and the
+  sibling tools import for sources + tunables (window, caps, timeout), instead of
+  the current split between `lib/sources.js` and `lib/fetchers.js`.
+- **Full ATS adapter interface** — a uniform `{ id, list(config), normalize(raw) }`
+  contract so a new ATS is one adapter file, not another `from*` function wired
+  into the orchestrator.
+- **Notifications** — push/email/Slack on new matching postings (the reason the
+  repo is named *JobNotifier*).
+- **Cross-source dedup** — the same role listed on a company board *and* an
+  aggregator is currently deduped only by `id` (company + title + location);
+  fuzzier matching would collapse more true duplicates.
+- **H-1B enrichment** — surface the sponsorship signal per card (it's used today
+  only as an offline inclusion gate, not shown in the feed).
+
 ## Notes & limitations
 
 - **24h window is strict and honest.** Every source uses a true post date
