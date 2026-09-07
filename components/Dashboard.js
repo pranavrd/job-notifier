@@ -8,6 +8,7 @@ const COUNTRY_LABEL = { Canada: "CA", USA: "US", "Cross-Border": "US/CA", Intern
 const WORKTYPES = ["all", "Remote", "Hybrid", "Onsite"];
 const POSITIONS = ["all", "Internship", "Full-Time", "New Grad", "Contract", "Co-op"];
 const ROLES = ["all", "Software", "AI/ML", "Backend", "Cloud", "Other"];
+const SORTS = ["new", "company", "title"];
 const POS_COLOR = {
   Internship: "var(--aqua)",
   "Full-Time": "var(--blue)",
@@ -36,6 +37,22 @@ function relTime(ms) {
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m ago`;
+}
+// Day-resolution sources only know the calendar day, so collapse the age to
+// whole ~24h buckets ("today" / "yesterday" / "Nd ago") instead of a false
+// minute/hour reading. Measured against the sync reference (postedAt for these
+// sources is synthesized ~23h/47h before fetch time), so the label stays stable
+// as the tab ages and is immune to client clock skew.
+function dayAge(ms, ref = Date.now()) {
+  const days = Math.max(0, Math.floor((ref - ms) / (24 * 3600 * 1000)));
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
+}
+// Per-card age: honor a job's stated precision, fall back to exact relative time.
+function cardAge(job, ref) {
+  if (job && job.precision === "day") return dayAge(job.postedAt, ref);
+  return relTime(job && job.postedAt);
 }
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -87,6 +104,7 @@ export default function Dashboard() {
 
   const [toast, setToast] = useState(null);          // { msg, undo }
   const toastTimer = useRef(null);
+  const fileRef = useRef(null);                       // hidden <input type=file> for import
 
   useEffect(() => {
     setApplied(LS.get("jn_applied", {}));
@@ -94,11 +112,7 @@ export default function Dashboard() {
     setReportedJobs(LS.get("jn_reported_jobs", {}));
     setReportedCos(LS.get("jn_reported_cos", {}));
     const p = LS.get("jn_prefs", null);
-    if (p) {
-      setCountry(p.country ?? "all"); setWork(p.work ?? "all");
-      setPosition(p.position ?? "all"); setRole(p.role ?? "all"); setSort(p.sort ?? "new");
-      if (WINDOW_STEPS.includes(p.windowHours)) setWindowHours(p.windowHours);
-    }
+    if (p) applyPrefs(p);
     load(false);
   }, []);
 
@@ -132,6 +146,94 @@ export default function Dashboard() {
   function savePrefs() {
     LS.set("jn_prefs", { country, work, position, role, sort, windowHours });
     flash("Preferences saved to this browser");
+  }
+
+  // Normalize a prefs object against the known vocabularies so a hand-edited or
+  // stale file can never leave the feed stuck on an unknown facet value.
+  function normalizePrefs(p) {
+    const src = p && typeof p === "object" ? p : {};
+    const pick = (v, list, dflt) => (list.includes(v) ? v : dflt);
+    return {
+      country: pick(src.country, COUNTRIES, "all"),
+      work: pick(src.work, WORKTYPES, "all"),
+      position: pick(src.position, POSITIONS, "all"),
+      role: pick(src.role, ROLES, "all"),
+      sort: pick(src.sort, SORTS, "new"),
+      windowHours: WINDOW_STEPS.includes(src.windowHours) ? src.windowHours : 24,
+    };
+  }
+  function applyPrefs(p) {
+    const n = normalizePrefs(p);
+    setCountry(n.country); setWork(n.work); setPosition(n.position);
+    setRole(n.role); setSort(n.sort); setWindowHours(n.windowHours);
+    return n;
+  }
+
+  /* ---- state export / import (portable per-viewer data) ---- */
+  const STATE_KEYS = ["jn_applied", "jn_hidden", "jn_reported_jobs", "jn_reported_cos", "jn_prefs"];
+
+  function exportState() {
+    try {
+      const data = {};
+      for (const k of STATE_KEYS) data[k] = LS.get(k, null);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const d = new Date();
+      const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `jobnotifier-state-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      flash("State exported to a JSON file");
+    } catch {
+      flash("Export failed");
+    }
+  }
+
+  // Accept only a plain object map (id -> value); anything else becomes {}.
+  const asMap = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+  // Hidden maps must be id -> numeric hide-until; drop any corrupt entries so a
+  // bad value can't silently un-hide (or permanently pin) a role.
+  const asHideMap = (v) => {
+    const src = asMap(v);
+    const out = {};
+    for (const k in src) { const n = Number(src[k]); if (Number.isFinite(n)) out[k] = n; }
+    return out;
+  };
+
+  function applyImported(data) {
+    if ("jn_applied" in data) { const v = asMap(data.jn_applied); LS.set("jn_applied", v); setApplied(v); }
+    if ("jn_hidden" in data) { const v = asHideMap(data.jn_hidden); LS.set("jn_hidden", v); setHidden(v); }
+    if ("jn_reported_jobs" in data) { const v = asMap(data.jn_reported_jobs); LS.set("jn_reported_jobs", v); setReportedJobs(v); }
+    if ("jn_reported_cos" in data) { const v = asMap(data.jn_reported_cos); LS.set("jn_reported_cos", v); setReportedCos(v); }
+    if ("jn_prefs" in data && data.jn_prefs && typeof data.jn_prefs === "object" && !Array.isArray(data.jn_prefs)) {
+      const n = applyPrefs(data.jn_prefs);
+      LS.set("jn_prefs", n);
+    }
+  }
+
+  function importState(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // reset so re-picking the same file fires onChange again
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("bad");
+        if (!STATE_KEYS.some((k) => k in data)) throw new Error("empty");
+        if (!window.confirm("Import replaces your applied, hidden, reported lists and preferences in this browser. Continue?")) return;
+        applyImported(data);
+        flash("State imported into this browser");
+      } catch {
+        flash("Import failed — not a valid JobNotifier state file");
+      }
+    };
+    reader.onerror = () => flash("Import failed — could not read the file");
+    reader.readAsText(file);
   }
 
   /* ---- per-card actions ---- */
@@ -256,6 +358,13 @@ export default function Dashboard() {
             <span className={syncing ? "spin" : ""} style={{ display: "inline-flex" }}><Icon d={I.sync} size={14} /></span>
             {syncing ? "Syncing" : "Sync"}
           </button>
+          <button className="nbtn" onClick={exportState} title="Download your applied / hidden / reported lists and preferences">
+            Export
+          </button>
+          <button className="nbtn" onClick={() => fileRef.current && fileRef.current.click()} title="Restore a previously exported state file">
+            Import
+          </button>
+          <input ref={fileRef} type="file" accept="application/json,.json" onChange={importState} style={{ display: "none" }} />
           <span className="user"><span className="uava">A</span>Alex</span>
         </nav>
       </header>
@@ -346,7 +455,7 @@ export default function Dashboard() {
         <>
           <section className="grid">
             {visible.map((j) => (
-              <JobCard key={j.id} job={j} applied={!!applied[j.id]}
+              <JobCard key={j.id} job={j} refTime={refTime} applied={!!applied[j.id]}
                 onApplied={() => toggleApplied(j)} onHide={() => hideJob(j)} onReport={() => reportJob(j)} />
             ))}
           </section>
@@ -398,7 +507,7 @@ function FilterRow({ label, items, value, onChange, render, accent }) {
   );
 }
 
-function JobCard({ job, applied, onApplied, onHide, onReport }) {
+function JobCard({ job, refTime, applied, onApplied, onHide, onReport }) {
   return (
     <article className="card">
       <div className="chead">
@@ -421,7 +530,7 @@ function JobCard({ job, applied, onApplied, onHide, onReport }) {
       <div className="crow">
         <Icon d={I.pin} size={13} />
         <span className="cloc">{job.location}</span>
-        <span className="cage">{relTime(job.postedAt)}</span>
+        <span className="cage">{cardAge(job, refTime)}</span>
       </div>
 
       <div className="cfoot">
