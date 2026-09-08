@@ -1,0 +1,48 @@
+# Hourly email digest trigger.
+#
+# Vercel Hobby (free) cron runs at most once/day, so the hourly cadence is driven
+# from here instead: GitHub Actions pings the deployed /api/cron/notify every hour
+# (UTC), and the route self-gates to Pacific time — it only actually sends at 7AM
+# plus hourly 9AM–9PM PT, each send covering the span since the previous slot
+# (storage-free; see lib/notify.js). Off-slot hours return quickly and send nothing.
+#
+# Setup (in the GitHub repo you want to run this — set it in ONE repo only):
+#   Settings → Secrets and variables → Actions
+#     Variable  NOTIFY_CRON_ENABLED = true      (gates the job; unset elsewhere → skipped)
+#     Variable  APP_URL             = https://<your-app>.vercel.app
+#     Secret    CRON_SECRET         = <same value as the Vercel CRON_SECRET env var>
+# And in Vercel: leave NOTIFY_WINDOW_HOURS UNSET so the route uses the hourly
+# PT-slot windows (setting it forces a fixed-window digest on every call).
+
+name: Hourly job notifications
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour, UTC; the app decides which hours actually send
+  workflow_dispatch: {} # allow a manual run for testing
+
+concurrency:
+  group: job-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    # Run in exactly ONE repo: set the repo variable NOTIFY_CRON_ENABLED=true
+    # there. The file may be mirrored to the deploy repo; leaving the variable
+    # unset makes this job skip, so only one repo ever fires the digest.
+    if: ${{ vars.NOTIFY_CRON_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger digest
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "APP_URL (variable) and CRON_SECRET (secret) must be set on this repo." >&2
+            exit 1
+          fi
+          # -f fails the run on any HTTP error so a broken deploy shows red here.
+          curl -fsS -m 90 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL%/}/api/cron/notify" | tee /dev/stderr

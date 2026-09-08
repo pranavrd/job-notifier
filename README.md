@@ -174,44 +174,51 @@ no secrets, no cron, no database.
 
 ### Email digests (push)
 
-An email digest via [Resend](https://resend.com), scheduled by Vercel Cron. The
-cron route is [`/api/cron/notify`](app/api/cron/notify/route.js); it fetches
-through the shared cache, selects the roles for the window, and sends. Only
-`precision:"exact"` roles are emailed (Workday/Oracle day-resolution roles can't
-be pinned to a time; they still appear in the app and RSS). Empty windows send
-nothing. There are two scheduling modes:
+An hourly email digest via [Resend](https://resend.com). The route is
+[`/api/cron/notify`](app/api/cron/notify/route.js); it fetches through the shared
+cache, selects the roles for the window, and sends. Only `precision:"exact"`
+roles are emailed (Workday/Oracle day-resolution roles can't be pinned to a time;
+they still appear in the app and RSS). Empty windows send nothing.
 
-- **Daily digest (Vercel Hobby / free).** Hobby cron runs at most once per day.
-  Set `NOTIFY_WINDOW_HOURS=24` and keep the daily schedule in
-  [`vercel.json`](vercel.json) (`0 14 * * *` ≈ 6–7AM PT); each run emails the last
-  24h once. **This is the default shipped config.**
-- **Hourly digest (Vercel Pro).** Leave `NOTIFY_WINDOW_HOURS` unset and change the
-  schedule to `0 * * * *`. The route then **self-gates on Pacific time**
-  (`lib/notify.js`): 7AM + hourly 9AM–9PM PT, each send covering the span since
-  the previous slot (7AM = 10h overnight, 9AM = 2h, the rest = 1h), computed from
-  the clock so **no datastore** is needed to avoid repeats.
+**What drives it — GitHub Actions, not Vercel Cron.** Vercel Hobby (free) cron
+runs at most once/day, so the hourly cadence is triggered by a scheduled GitHub
+Actions workflow ([`.github/workflows/notify.yml`](.github/workflows/notify.yml))
+that pings the route every hour. The route **self-gates on Pacific time**
+(`lib/notify.js`): it sends at 7AM + hourly 9AM–9PM PT, each send covering the
+span since the previous slot (7AM = 10h overnight, 9AM = 2h, the rest = 1h),
+computed from the clock so **no datastore** is needed to avoid repeats. Off-slot
+hours return immediately and send nothing (they don't even fan out).
 
-Setup (all in Vercel → Project → Settings → Environment Variables):
+Setup has two halves:
+
+**1. Vercel → Settings → Environment Variables**
 
 | Var | Required | What |
 | --- | --- | --- |
 | `RESEND_API_KEY` | yes | From your Resend dashboard. |
 | `NOTIFY_TO` | yes | Recipient address. |
-| `NOTIFY_WINDOW_HOURS` | Hobby: yes | Fixed-window mode: every run emails this many hours and skips the hourly-slot gate. Set to `24` for a daily digest. Unset on Pro for the hourly schedule. |
+| `CRON_SECRET` | yes | A long random string; the route rejects calls without it (sent as a Bearer token). Must match the GitHub secret below. |
 | `NOTIFY_FROM` | no | Sender; defaults to `JobNotifier <onboarding@resend.dev>`. **Resend's test sender only delivers to the email you signed up to Resend with** — to send anywhere else, verify a domain in Resend and set this. |
 | `NOTIFY_QUERY` | no | Scope the digest, e.g. `role=Software&country=USA` (keys are **lowercase**). |
-| `CRON_SECRET` | recommended | Vercel sends it as a Bearer token on cron runs; when set, the route rejects requests without it. |
+| `NOTIFY_WINDOW_HOURS` | no | **Leave unset for the hourly schedule.** If set, it forces a fixed-window digest (e.g. `24`) on *every* call and skips the PT-slot gate — only for a once-daily trigger (e.g. Vercel Pro isn't available and you drive one daily ping). |
 
-Test without waiting for the clock:
-`GET /api/cron/notify?dry=1&force=1&hours=48&secret=<CRON_SECRET>` renders the
-digest (count + subject) without sending; drop `dry=1` to actually send. The JSON
-response says exactly what happened — `sent`, `count`, or an `error` (e.g. a
-Resend rejection).
+**2. GitHub → the repo you want to run the cron → Settings → Secrets and variables → Actions**
 
-> **Future:** replace the polling digest with instant alerts the moment a new
-> sponsored role is posted. Deferred pending a design pass — it needs per-job
-> "already notified" state (a datastore) and a tighter trigger, which is a
-> different shape from the storage-free hourly window here.
+| Kind | Name | Value |
+| --- | --- | --- |
+| Variable | `NOTIFY_CRON_ENABLED` | `true` — gates the job. Set it in **one** repo only; the workflow skips where it's unset, so a mirrored copy in the deploy repo won't double-fire. |
+| Variable | `APP_URL` | `https://<your-app>.vercel.app` |
+| Secret | `CRON_SECRET` | same value as the Vercel `CRON_SECRET`. |
+
+The workflow also has a **Run workflow** button (`workflow_dispatch`) for an
+immediate test. Or test the route directly (never sends with `dry=1`):
+`GET /api/cron/notify?dry=1&force=1&hours=48&secret=<CRON_SECRET>` — the JSON says
+exactly what happened (`sent`, `count`, or an `error`). Drop `dry=1` to send.
+
+> **Future:** near-real-time alerts (poll every ~10–15 min) instead of hourly.
+> That needs a sent-id store (Upstash/Vercel KV free tier) to dedup overlapping
+> polls and an external pinger, and is bounded by ATS indexing lag (there's no
+> true push from the boards). Deferred by choice — hourly is the current target.
 
 **H-1B badge.** Cards for name-verified recent H-1B/LCA filers show a small
 green **H-1B** tag (the WORKDAY + ORACLE lists and the board tokens tagged in
