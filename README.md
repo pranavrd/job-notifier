@@ -55,7 +55,9 @@ npm run build && npm start   # production build
 
 1. Push this folder to a GitHub repo.
 2. Import it at [vercel.com/new](https://vercel.com/new) — it auto-detects Next.js.
-3. Deploy. No environment variables required.
+3. Deploy. No environment variables required for the app + RSS feed. The email
+   digest is opt-in — add the `RESEND_API_KEY` / `NOTIFY_TO` / `CRON_SECRET` vars
+   from the [Email digests](#email-digests-push) table to turn it on.
 
 (Or `npm i -g vercel && vercel` from this folder.)
 
@@ -148,11 +150,14 @@ Each card has three actions (stored per-browser in `localStorage`, no accounts):
 
 Each Hide / Report shows an **Undo** in the toast.
 
-## Notifications (RSS)
+## Notifications
 
-The reason the repo is named *JobNotifier*: subscribe once and your reader tells
-you about new matching roles — no accounts, no secrets, no cron, no database, the
-same deploy-as-is ethos as the rest of the app.
+Two ways to get told about new roles — one zero-config (RSS), one push (email).
+
+### RSS (zero config)
+
+Subscribe once and your reader tells you about new matching roles — no accounts,
+no secrets, no cron, no database.
 
 - **Feed endpoint:** `/api/feed` emits the current feed as RSS 2.0. It's
   filterable via query params that map to the same buckets as the UI:
@@ -166,6 +171,39 @@ same deploy-as-is ethos as the rest of the app.
 - **Auto-discovery:** the page advertises `/api/feed` via a `<link
   rel="alternate" type="application/rss+xml">`, so readers pointed at the site
   find it automatically.
+
+### Email digests (push)
+
+An hourly email digest via [Resend](https://resend.com), scheduled by Vercel
+Cron. The cron route [`/api/cron/notify`](app/api/cron/notify/route.js) fires
+every hour and **self-gates on Pacific time** (`lib/notify.js`): it sends at 7AM
+plus hourly 9AM–9PM PT. Each send covers the span *since the previous slot* (7AM
+catch-up = 10h of overnight postings; 9AM = 2h; the rest = 1h), computed from the
+clock — **no datastore** is needed to avoid repeats. Only `precision:"exact"`
+roles are emailed (Workday/Oracle day-resolution roles can't be pinned to an
+hour; they still appear in the app and RSS). Empty windows send nothing.
+
+Setup (all in Vercel → Project → Settings → Environment Variables):
+
+| Var | Required | What |
+| --- | --- | --- |
+| `RESEND_API_KEY` | yes | From your Resend dashboard. |
+| `NOTIFY_TO` | yes | Recipient address. |
+| `NOTIFY_FROM` | no | Sender; defaults to `JobNotifier <onboarding@resend.dev>` (Resend's test sender only delivers to your own account email — verify a domain in Resend to send elsewhere). |
+| `NOTIFY_QUERY` | no | Scope the digest, e.g. `role=AI/ML&country=USA&work=Remote`. |
+| `CRON_SECRET` | recommended | Vercel sends it as a Bearer token on cron runs; when set, the route rejects requests without it. |
+
+The cron is declared in [`vercel.json`](vercel.json). **Plan note:** hourly cron
+needs Vercel **Pro** — on **Hobby**, cron runs at most once per day, so change the
+schedule to a single daily run (e.g. `"schedule": "0 14 * * *"` for the 7AM PT /
+14:00 UTC catch-up) and it degrades to one daily digest. Test without waiting for
+the clock: `GET /api/cron/notify?dry=1&force=1&hours=48` renders the digest (count
++ subject) without sending; drop `dry=1` to actually send.
+
+> **Future:** replace the polling digest with instant alerts the moment a new
+> sponsored role is posted. Deferred pending a design pass — it needs per-job
+> "already notified" state (a datastore) and a tighter trigger, which is a
+> different shape from the storage-free hourly window here.
 
 **H-1B badge.** Cards for name-verified recent H-1B/LCA filers show a small
 green **H-1B** tag (the WORKDAY + ORACLE lists and the board tokens tagged in
@@ -318,15 +356,16 @@ The coupled refactors that were previously deferred now live in the tree:
   company's own board already carries.
 - **H-1B enrichment** — the `sponsorship` field on every job, shown as the H-1B
   card badge ([`lib/sponsors.js`](lib/sponsors.js)).
-- **Notifications** — the RSS feed above.
+- **Notifications** — RSS feed *and* the hourly email digest above.
 
 ### Still deferred
 
-- **Push notifications (email / Slack)** — RSS covers "notify me" with zero
-  config; email/Slack push additionally needs a scheduler (e.g. Vercel Cron) plus
-  a per-user destination + secret, which breaks the no-env-vars, no-accounts
-  promise. Left as an opt-in extension: a cron route that diffs the feed against a
-  last-seen set and POSTs new roles to a webhook.
+- **Instant email alerts** — the current digest polls on a schedule. Sending the
+  moment a sponsored role is posted needs per-job "already notified" state (a
+  datastore) and a tighter trigger — a different shape from the storage-free
+  hourly window. Deferred pending a design pass.
+- **Slack / webhook push** — the same digest content POSTed to a Slack incoming
+  webhook instead of email; small add-on to the cron route once wanted.
 - **Fuzzier dedup** — cross-source dedup is deliberately conservative (exact
   company + title). Token-overlap / edit-distance matching would collapse more
   near-duplicates, at the risk of merging genuinely distinct reqs.
