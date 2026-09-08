@@ -174,14 +174,22 @@ no secrets, no cron, no database.
 
 ### Email digests (push)
 
-An hourly email digest via [Resend](https://resend.com), scheduled by Vercel
-Cron. The cron route [`/api/cron/notify`](app/api/cron/notify/route.js) fires
-every hour and **self-gates on Pacific time** (`lib/notify.js`): it sends at 7AM
-plus hourly 9AM–9PM PT. Each send covers the span *since the previous slot* (7AM
-catch-up = 10h of overnight postings; 9AM = 2h; the rest = 1h), computed from the
-clock — **no datastore** is needed to avoid repeats. Only `precision:"exact"`
-roles are emailed (Workday/Oracle day-resolution roles can't be pinned to an
-hour; they still appear in the app and RSS). Empty windows send nothing.
+An email digest via [Resend](https://resend.com), scheduled by Vercel Cron. The
+cron route is [`/api/cron/notify`](app/api/cron/notify/route.js); it fetches
+through the shared cache, selects the roles for the window, and sends. Only
+`precision:"exact"` roles are emailed (Workday/Oracle day-resolution roles can't
+be pinned to a time; they still appear in the app and RSS). Empty windows send
+nothing. There are two scheduling modes:
+
+- **Daily digest (Vercel Hobby / free).** Hobby cron runs at most once per day.
+  Set `NOTIFY_WINDOW_HOURS=24` and keep the daily schedule in
+  [`vercel.json`](vercel.json) (`0 14 * * *` ≈ 6–7AM PT); each run emails the last
+  24h once. **This is the default shipped config.**
+- **Hourly digest (Vercel Pro).** Leave `NOTIFY_WINDOW_HOURS` unset and change the
+  schedule to `0 * * * *`. The route then **self-gates on Pacific time**
+  (`lib/notify.js`): 7AM + hourly 9AM–9PM PT, each send covering the span since
+  the previous slot (7AM = 10h overnight, 9AM = 2h, the rest = 1h), computed from
+  the clock so **no datastore** is needed to avoid repeats.
 
 Setup (all in Vercel → Project → Settings → Environment Variables):
 
@@ -189,16 +197,16 @@ Setup (all in Vercel → Project → Settings → Environment Variables):
 | --- | --- | --- |
 | `RESEND_API_KEY` | yes | From your Resend dashboard. |
 | `NOTIFY_TO` | yes | Recipient address. |
-| `NOTIFY_FROM` | no | Sender; defaults to `JobNotifier <onboarding@resend.dev>` (Resend's test sender only delivers to your own account email — verify a domain in Resend to send elsewhere). |
-| `NOTIFY_QUERY` | no | Scope the digest, e.g. `role=AI/ML&country=USA&work=Remote`. |
+| `NOTIFY_WINDOW_HOURS` | Hobby: yes | Fixed-window mode: every run emails this many hours and skips the hourly-slot gate. Set to `24` for a daily digest. Unset on Pro for the hourly schedule. |
+| `NOTIFY_FROM` | no | Sender; defaults to `JobNotifier <onboarding@resend.dev>`. **Resend's test sender only delivers to the email you signed up to Resend with** — to send anywhere else, verify a domain in Resend and set this. |
+| `NOTIFY_QUERY` | no | Scope the digest, e.g. `role=Software&country=USA` (keys are **lowercase**). |
 | `CRON_SECRET` | recommended | Vercel sends it as a Bearer token on cron runs; when set, the route rejects requests without it. |
 
-The cron is declared in [`vercel.json`](vercel.json). **Plan note:** hourly cron
-needs Vercel **Pro** — on **Hobby**, cron runs at most once per day, so change the
-schedule to a single daily run (e.g. `"schedule": "0 14 * * *"` for the 7AM PT /
-14:00 UTC catch-up) and it degrades to one daily digest. Test without waiting for
-the clock: `GET /api/cron/notify?dry=1&force=1&hours=48` renders the digest (count
-+ subject) without sending; drop `dry=1` to actually send.
+Test without waiting for the clock:
+`GET /api/cron/notify?dry=1&force=1&hours=48&secret=<CRON_SECRET>` renders the
+digest (count + subject) without sending; drop `dry=1` to actually send. The JSON
+response says exactly what happened — `sent`, `count`, or an `error` (e.g. a
+Resend rejection).
 
 > **Future:** replace the polling digest with instant alerts the moment a new
 > sponsored role is posted. Deferred pending a design pass — it needs per-job

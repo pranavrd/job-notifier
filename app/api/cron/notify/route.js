@@ -40,13 +40,21 @@ export async function GET(request) {
   const dry = params.get("dry") === "1";
   const force = params.get("force") === "1";
 
-  // Which window are we in? `force` (test only) synthesizes a window from
-  // ?hours= regardless of the clock; otherwise use the real PT schedule and do
-  // nothing on an off-schedule hour.
+  // Which window are we in? Precedence:
+  //   1. force (test only) — synthesize a window from ?hours= regardless of clock.
+  //   2. NOTIFY_WINDOW_HOURS — fixed-window mode: every run sends a digest for
+  //      this many hours, bypassing the PT-slot gate. This is the Vercel Hobby
+  //      path — Hobby cron runs at most once/day, so set NOTIFY_WINDOW_HOURS=24
+  //      and a daily cron for one 24h digest (the hourly-slot schedule needs Pro).
+  //   3. Otherwise — the real PT schedule (7AM + hourly 9AM–9PM); off-schedule
+  //      hours do nothing.
+  const fixedHours = Number(process.env.NOTIFY_WINDOW_HOURS);
   let win;
   if (force) {
     const hours = Number(params.get("hours")) || 1;
     win = { ptHour: ptHour(new Date(now)), hours, isCatchup: false, label: `the last ${hours} hours (forced)` };
+  } else if (Number.isFinite(fixedHours) && fixedHours > 0) {
+    win = { ptHour: ptHour(new Date(now)), hours: fixedHours, isCatchup: false, label: `the last ${fixedHours} hours` };
   } else {
     win = notificationWindow(new Date(now));
     if (!win) return json({ skipped: true, reason: "not a send hour", ptHour: ptHour(new Date(now)) });
